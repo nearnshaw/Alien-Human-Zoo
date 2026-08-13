@@ -10,8 +10,8 @@
     "upgrade-sdk:next": "npm install --save-dev @dcl/sdk@next"
   },
   "devDependencies": {
-    "@dcl/js-runtime": "7.25.0",
-    "@dcl/sdk": "latest"
+    "@dcl/js-runtime": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/fix/get-free-port-ipv4-probe/@dcl/js-runtime/dcl-js-runtime-7.26.1-31705586073.commit-bccc99c.tgz",
+    "@dcl/sdk": "https://sdk-team-cdn.decentraland.org/@dcl/js-sdk-toolchain/branch/fix/get-free-port-ipv4-probe/dcl-sdk-7.26.1-31705586073.commit-bccc99c.tgz"
   },
   "engines": {
     "node": ">=16.0.0",
