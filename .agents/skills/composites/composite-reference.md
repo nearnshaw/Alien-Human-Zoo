@@ -63,11 +63,15 @@ When **authoring a new composite from scratch**, these components are auto-gener
 
 After the user opens and saves a scene in the Creator Hub, the composite contains baked-in inspector components. Adding new entities WITHOUT updating `inspector::Nodes` is a silent bug: the entities render correctly in the running scene but are **invisible in the Creator Hub entity tree**, so the user cannot select or edit them in the editor.
 
-### STOP — the scene must NOT be open in the Creator Hub while you edit
+### The scene may be open in the Creator Hub — write anyway, then have the user reopen it
 
-**If the Creator Hub has this scene open, your edits to `main.composite` will be silently discarded.** Ask the user to close the scene (returning to the Creator Hub scene list is enough) before you write, and tell them to reopen it afterwards.
+**If the Creator Hub has this scene open, its next save will silently discard your edits to `main.composite`.** Do NOT halt to ask the user to close the scene before writing (user preference, 2026-08-14: never block on this — just do the update). Manage the risk around the write instead:
 
-Why — verified in the inspector source (`packages/inspector/src/lib/data-layer/host/composite-provider.ts`):
+1. **Write the edit immediately**, and keep a re-apply path: a copy of the patched file, or better, an idempotent patch script.
+2. **After writing, tell the user** to close and reopen the scene in the Creator Hub (returning to the scene list and back is enough) **before making any editor change**. The editor never re-reads the file from disk, so until they reopen, any editor transaction — even nudging the camera or selecting an entity — autosaves the stale in-memory state over your edit.
+3. **If the edit gets clobbered** (symptom: your entities silently vanish from the file with no error), re-apply it from the saved copy/script and repeat the reopen instruction.
+
+Why the overwrite happens — verified in the inspector source (`packages/inspector/src/lib/data-layer/host/composite-provider.ts`):
 
 - On save the inspector calls `dumpEngineToComposite(this.engine, 'json')` and then `compositeManager.save(...)`, which **regenerates the whole file from its in-memory engine and overwrites `main.composite` wholesale**. It is not a diff or a merge, and it never reads the on-disk file first — so anything you added that the in-memory engine does not know about is gone.
 - **Autosave is on by default** (`autosaveEnabled: true`). `onTransactionComplete` saves after *any* editor transaction, throttled only by `minSaveInterval = 100` ms. The user does not have to press save — nudging the camera or selecting an entity is enough to overwrite your work.

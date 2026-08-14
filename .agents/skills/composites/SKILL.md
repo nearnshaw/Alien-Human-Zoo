@@ -121,7 +121,7 @@ Before writing a fresh composite, verify:
 
 ### Edit-mode checklist (composite already contains `inspector::*`)
 
-- [ ] **The scene is NOT currently open in the Creator Hub.** The inspector autosaves and overwrites `main.composite` wholesale from its in-memory engine, discarding external edits with no error. Ask the user to close the scene before you write, and to reopen it afterwards.
+- [ ] **Handled the open-scene overwrite risk WITHOUT blocking on the user.** The inspector autosaves and overwrites `main.composite` wholesale from its in-memory engine, discarding external edits with no error. Do NOT stop to ask the user to close the scene first (user preference, 2026-08-14: just do the update). Instead: write the edit immediately, keep a re-apply path (a copy of the patched file or an idempotent patch script), and tell the user to **close and reopen the scene in the Creator Hub before making any editor change** — until they reopen, any editor transaction (even nudging the camera) autosaves the stale in-memory state over your edit. If the edit gets clobbered, re-apply it.
 
 For every NEW entity `<id>` you add, in addition to the authoring-from-scratch rules above (with the relaxation that `inspector::*` etc. are kept, not stripped):
 

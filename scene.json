@@ -15,6 +15,7 @@
   "main": "bin/index.js",
   "tags": [],
   "scene": {
+    "base": "0,0",
     "parcels": [
       "0,2",
       "1,2",
@@ -25,8 +26,7 @@
       "0,0",
       "1,0",
       "2,0"
-    ],
-    "base": "0,0"
+    ]
   },
   "spawnPoints": [
     {
@@ -42,13 +42,13 @@
           0
         ],
         "z": [
-          7.2,
-          8.2
+          5.199999809265137,
+          7.199999809265137
         ]
       },
       "cameraTarget": {
         "x": 16,
-        "y": 3.9,
+        "y": 3.9000000953674316,
         "z": 19
       }
     }
@@ -64,11 +64,15 @@
   },
   "creator": "",
   "skyboxConfig": {
-    "fixedTime": 0
+    "fixedTime": 420
   },
-  "landscapeTerrain": true,
+  "landscapeTerrain": false,
   "source": {
     "origin": "creator-hub",
     "projectId": "f9315f74-a338-45a2-aefa-4f28e37aad78"
+  },
+  "rating": "A",
+  "worldConfiguration": {
+    "name": "mikakitchen.dcl.eth"
   }
 }

@@ -2,6 +2,223 @@
   "version": 1,
   "components": [
     {
+      "name": "core::Transform",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            }
+          },
+          "scale": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            }
+          },
+          "rotation": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              },
+              "w": {
+                "type": "number"
+              }
+            }
+          },
+          "parent": {
+            "type": "integer"
+          }
+        },
+        "serializationType": "transform"
+      },
+      "data": {
+        "512": {
+          "json": {
+            "position": {
+              "x": 16,
+              "y": 0,
+              "z": 12.7982
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 0
+          }
+        },
+        "513": {
+          "json": {
+            "position": {
+              "x": 21.2941,
+              "y": 0,
+              "z": 14.9951
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 0
+          }
+        },
+        "514": {
+          "json": {
+            "position": {
+              "x": 16,
+              "y": 0,
+              "z": 6.5
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 0
+          }
+        },
+        "515": {
+          "json": {
+            "position": {
+              "x": 16,
+              "y": 4.3138,
+              "z": 14.85
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "core::GltfContainer",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {},
+        "serializationType": "protocol-buffer",
+        "protocolBuffer": "PBGltfContainer"
+      },
+      "data": {
+        "512": {
+          "json": {
+            "src": "assets/scene/models/alien_console.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "513": {
+          "json": {
+            "src": "assets/scene/models/alien_translator_booth.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "514": {
+          "json": {
+            "src": "assets/scene/models/alien_spawn_pad.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "515": {
+          "json": {
+            "src": "assets/scene/models/alien_glyph_panel.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "core-schema::Name",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "string",
+            "serializationType": "utf8-string"
+          }
+        },
+        "serializationType": "map"
+      },
+      "data": {
+        "512": {
+          "json": {
+            "value": "Console"
+          }
+        },
+        "513": {
+          "json": {
+            "value": "Translator Booth"
+          }
+        },
+        "514": {
+          "json": {
+            "value": "Spawn Pad"
+          }
+        },
+        "515": {
+          "json": {
+            "value": "Glyph Panel"
+          }
+        }
+      }
+    },
+    {
       "name": "core-schema::Tags",
       "jsonSchema": {
         "type": "object",
@@ -94,7 +311,12 @@
             "value": [
               {
                 "entity": 0,
-                "children": [],
+                "children": [
+                  512,
+                  513,
+                  514,
+                  515
+                ],
                 "open": true
               },
               {
@@ -104,9 +326,56 @@
               {
                 "entity": 2,
                 "children": []
+              },
+              {
+                "entity": 512,
+                "children": []
+              },
+              {
+                "entity": 513,
+                "children": []
+              },
+              {
+                "entity": 514,
+                "children": []
+              },
+              {
+                "entity": 515,
+                "children": []
               }
             ]
           }
+        }
+      }
+    },
+    {
+      "name": "inspector::TransformConfig",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "porportionalScaling": {
+            "type": "boolean",
+            "serializationType": "optional",
+            "optionalJsonSchema": {
+              "type": "boolean",
+              "serializationType": "boolean"
+            }
+          }
+        },
+        "serializationType": "map"
+      },
+      "data": {
+        "512": {
+          "json": {}
+        },
+        "513": {
+          "json": {}
+        },
+        "514": {
+          "json": {}
+        },
+        "515": {
+          "json": {}
         }
       }
     },
@@ -455,6 +724,7 @@
             "name": "Alien Human Zoo",
             "description": "Empty Scene Template",
             "thumbnail": "assets/images/autogenerated-thumbnail.png",
+            "ageRating": "A",
             "categories": [],
             "author": "SDK",
             "email": "",
@@ -527,24 +797,24 @@
                   "z": {
                     "$case": "range",
                     "value": [
-                      2.6,
-                      4.2
+                      5.199999809265137,
+                      7.199999809265137
                     ]
                   }
                 },
                 "cameraTarget": {
                   "x": 16,
-                  "y": 3.9,
+                  "y": 3.9000000953674316,
                   "z": 19
                 }
               }
             ],
             "skyboxConfig": {
-              "fixedTime": 0
+              "fixedTime": 420
             },
             "creator": "",
             "disableNearbyVoiceChat": false,
-            "hideLandscapeTerrain": false
+            "hideLandscapeTerrain": true
           }
         }
       }
