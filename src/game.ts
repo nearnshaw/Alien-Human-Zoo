@@ -18,13 +18,19 @@ import {
   AvatarShape,
   GltfContainer,
   LightSource,
+  VirtualCamera,
+  MainCamera,
+  InputModifier,
+  TouchScreenControls,
   pointerEventsSystem,
   PointerEvents,
   InputAction,
   ColliderLayer
 } from '@dcl/sdk/ecs'
+import { getPlatform, isMobile } from '@dcl/sdk/platform'
 import { Vector3, Quaternion, Color4, Color3 } from '@dcl/sdk/math'
 import { DECK, DECK_SIZE, DeckOption, MeterKey, DEATH_LINES } from './deck'
+import { GlyphRow, createGlyphRow, setGlyphRowText } from './glyphs'
 
 // ---------- environment anchors ----------
 // Measured off the Blender build (design/blender/alien_human_zoo_env.blend).
@@ -36,55 +42,38 @@ import { DECK, DECK_SIZE, DeckOption, MeterKey, DEATH_LINES } from './deck'
 //     dcl = (-x_blender, z_blender, -y_blender)
 //
 // So the model is authored occupying Blender x -32..0 and y -32..0, which lands it on
-// x/z 0..32 here at an identity Transform. (Cross-checked against Genesis Plaza, whose
-// environment GLBs sit at positive X / negative Z and are placed with a 180 deg Y rotation —
-// that only lands inside its parcels if the loader negates X.)
+// x/z 0..32 here at an identity Transform.
 const ENV_MODEL = 'assets/scene/models/alien_zoo_interior.glb'
 
 // The main set pieces are split out of the environment GLB so they can be moved
-// independently. They are declared in assets/scene/main.composite (entities named
-// "Console", "Translator Booth", "Spawn Pad", "Glyph Panel"), so their live Transform is
-// whatever the Creator Hub editor last saved — reposition them there, not here.
+// independently. All declared in assets/scene/main.composite — their live Transform is
+// whatever the Creator Hub editor last saved; reposition them there, not here.
 const CONSOLE_MODEL = 'assets/scene/models/alien_console.glb' // arc, buttons, pylons + floor feed cables
 const TRANSLATOR_BOOTH_MODEL = 'assets/scene/models/alien_translator_booth.glb' // podium, ring + cable
 const SPAWN_PAD_MODEL = 'assets/scene/models/alien_spawn_pad.glb' // dais + ring at the arrival point
 const GLYPH_PANEL_MODEL = 'assets/scene/models/alien_glyph_panel.glb' // the canted alien-glyph display
 
 // Each piece was exported with its origin at the bottom-center of its bounding box, and
-// these are the positions that reproduce the original combined-model layout. They serve
-// two jobs: the fallback spot if a piece is missing from the composite, and — critically —
-// the anchor that turns this file's tuned absolute coordinates into piece-relative offsets
-// for the parented overlays. They must stay at the ORIGINAL export values even after a
-// piece is moved in the editor; the live position comes from the composite.
-const CONSOLE_POS = Vector3.create(16, 0, 12.7982) // z centre pulled bowl-ward by the feed cables in the bbox
-const TRANSLATOR_BOOTH_POS = Vector3.create(21.2941, 0, 14.9951) // centre includes the podium cable run
-const SPAWN_PAD_POS = Vector3.create(16, -0.03, 7.6) // the ring dips 3 cm into the floor
+// these are the positions that reproduce the original combined-model layout: the fallback
+// spot if a piece is missing from the composite, and the anchor that turns this file's
+// tuned absolute coordinates into piece-relative offsets for the parented overlays.
+const CONSOLE_POS = Vector3.create(16, 0, 12.7982)
+const TRANSLATOR_BOOTH_POS = Vector3.create(21.2941, 0, 14.9951)
+const SPAWN_PAD_POS = Vector3.create(16, -0.03, 7.6)
 const GLYPH_PANEL_POS = Vector3.create(16, 4.3138, 14.85)
 
-const BOWL_CENTER = Vector3.create(16, 3.9, 19) // glass globe centre, inner radius ~3.35
 const PLATFORM_Y = 1.54 // top of the specimen platform inside the bowl
-// A TextShape at identity rotation reads from the -Z side, i.e. from the console looking
-// toward the bowl. Panel-mounted text therefore carries the same yaw as the panel it sits on.
 const FACE_PLAYER = Quaternion.Identity()
 
-// Global multiplier on every TextShape font size: desktop reads fine at 1.0, but on mobile
-// screens the text is illegibly small. The backing surfaces (speech bubble, speech slab,
-// plaque, glyph panel) are NOT tied to this knob — they were sized generously and the text
-// grows into their slack; text mounted on modelled GLB surfaces (button plates, console
-// face) just grows over them.
+// Global multiplier on every TextShape font size (mobile readability).
 const TEXT_SCALE = 2.0
 
 // the three domed buttons modelled on the console arc, and their caption plates
-// index 0 is the amber dome, 1 teal, 2 red — left to right as the player faces the bowl
 const BUTTON_POS: Vector3[] = [
   Vector3.create(14.271, 1.165, 9.746),
   Vector3.create(16.0, 1.165, 10.145),
   Vector3.create(17.729, 1.165, 9.746)
 ]
-// These are NOT billboarded. The plates follow the console arc's yaw (+/-26 deg) but are no
-// longer tilted back — the 30 deg tilt was what made a flat text plane swim across the plate
-// and clip into it as the player moved. Each caption carries its plate's yaw and sits 0.06 m
-// out along that plate's own face normal, so it stays flush from every angle.
 const CAPTION_POS: Vector3[] = [
   Vector3.create(14.023, 1.57, 10.254),
   Vector3.create(16.0, 1.57, 10.71),
@@ -92,11 +81,7 @@ const CAPTION_POS: Vector3[] = [
 ]
 const CAPTION_YAW = [-26, 0, 26]
 
-// The four meter panels on the posts flanking the bowl. Each panel's fill bar is modelled in
-// its own colour, so the labels have to match the hardware: WATER/AIR sit on the west post,
-// TEMP/MOOD on the east one. The posts are canted 32 deg toward the console, so the readouts
-// stand 0.35 m clear along each panel's face normal — enough that a billboarded label never
-// swings back into the casing.
+// The four meter panels on the posts flanking the bowl.
 const METER_PANELS: { key: MeterKey; label: string; pos: Vector3 }[] = [
   { key: 'water', label: 'WATER', pos: Vector3.create(10.584, 3.187, 15.565) },
   { key: 'air', label: 'AIR', pos: Vector3.create(10.584, 4.737, 15.565) },
@@ -148,17 +133,14 @@ function makeText(
   parent?: Entity
 ): Entity {
   const e = engine.addEntity()
-  // When parented to a set piece, `position` must already be piece-relative: the call site
-  // subtracts the piece's ORIGINAL anchor (CONSOLE_POS etc.), never the parent's live
-  // transform — the piece may have been moved in the Creator Hub since these absolute
-  // numbers were tuned, and the offsets must move with it.
+  // When parented to a set piece, `position` must already be piece-relative: subtract the
+  // piece's ORIGINAL anchor (CONSOLE_POS etc.), never its live transform.
   Transform.create(e, { position, rotation, parent })
   TextShape.create(e, {
     text,
     fontSize: fontSize * TEXT_SCALE,
     textColor: color,
     outlineColor: Color3.Black(),
-    // heavy outline: most of this text floats over glowing panels and lit glass
     outlineWidth: 0.4,
     textAlign: TextAlignMode.TAM_MIDDLE_CENTER
   })
@@ -212,10 +194,79 @@ function shuffle(): number[] {
   return a
 }
 
-// ---------- entities (created once in setupGame) ----------
+// ---------- mobile mode ----------
+// On mobile the 3D console/glyph panel are unusable (tap targets are tiny and the camera
+// fights the touch joystick), so the scene switches interaction models entirely:
+//   - a fixed VirtualCamera frames everything readable at once
+//   - the console and glyph panel models (and their colliders) are moved out of the room
+//   - question glyphs, translator reading, consequence line, day counter, answer
+//     buttons and restart all render as screen-space UI (src/ui.tsx) via `uiState`
+// Desktop is untouched. The platform is reported asynchronously shortly after scene
+// start, so setupGame() defers building until it is known (3 s fallback = desktop).
+const FORCE_MOBILE_PREVIEW = false // set true to preview the mobile layout on desktop
+
+let MOBILE = false
+
+// read by src/ui.tsx every frame; mutated from render()/onButtonPressed()/gameOver()
+export const uiState = {
+  mobile: false,
+  day: '',
+  glyphs: '', // the alien question, drawn as atlas sprites (3D quads don't render on mobile)
+  captions: ['', '', ''],
+  translation: '', // the translator's reading — her 3D bubble is not shown on mobile
+  implementation: '', // "THE ALIENS ..." — its 3D mount (the glyph panel) is gone on mobile
+  showButtons: false,
+  showRestart: false
+}
+
+export function uiPress(i: number) {
+  onButtonPressed(i)
+}
+
+export function uiRestart() {
+  if (state === 'gameover') restart()
+}
+
+function setupMobileCamera() {
+  // One fixed shot tuned against the real set (framed with the Explorer's free camera).
+  const cam = engine.addEntity()
+  const camPos = Vector3.create(16, 5.2, 4)
+  // target y 3.2: the downward tilt lifts the set in the frame so the translator's
+  // upper body clears the UI button row at the bottom edge
+  const camTarget = Vector3.create(16.3, 3.2, 16)
+  Transform.create(cam, { position: camPos, rotation: Quaternion.fromLookAt(camPos, camTarget) })
+  VirtualCamera.create(cam, {
+    defaultTransition: { transitionMode: VirtualCamera.Transition.Time(0) }
+  })
+  MainCamera.createOrReplace(engine.CameraEntity, { virtualCameraEntity: cam })
+  // The whole game is played through the UI under a fixed camera — freeze the player.
+  InputModifier.createOrReplace(engine.PlayerEntity, {
+    mode: InputModifier.Mode.Standard({ disableAll: true })
+  })
+  // ...and strip the native touch controls: joystick, crosshair and all on-screen
+  // gamepad buttons are dead weight overlapping our buttons. The client's own HUD
+  // (emote wheel, profile) is not scene-controllable. No-op on desktop.
+  TouchScreenControls.create(engine.RootEntity, {
+    hideJoystick: true,
+    hideCrosshair: true,
+    touchInputs: [
+      InputAction.IA_POINTER,
+      InputAction.IA_PRIMARY,
+      InputAction.IA_SECONDARY,
+      InputAction.IA_JUMP,
+      InputAction.IA_ACTION_3,
+      InputAction.IA_ACTION_4,
+      InputAction.IA_ACTION_5,
+      InputAction.IA_ACTION_6
+    ].map((inputAction) => ({ inputAction, hide: true }))
+  })
+}
+
+// ---------- entities (created once in buildScene) ----------
 const meterTexts = new Map<MeterKey, Entity>()
 let dayText: Entity
-let glyphText: Entity
+let glyphRow: GlyphRow
+const buttonGlyphRows: GlyphRow[] = []
 let translatorText: Entity
 let bubbleRoot: Entity
 let implementationText: Entity
@@ -236,27 +287,24 @@ let predatorRoot: Entity
 let turbineActive = false
 
 export function setupGame() {
-  // ---------- the alien facility itself (one GLB, colliders baked in) ----------
-  const environment = engine.addEntity()
-  Transform.create(environment, { position: Vector3.Zero() })
-  GltfContainer.create(environment, {
-    src: ENV_MODEL,
-    // Every walkable/blocking surface is a "*_collider" mesh inside the model. These stay on
-    // CL_PHYSICS alone deliberately: the console colliders enclose the button volumes, so
-    // giving the whole model CL_POINTER too would make pointer rays hit the desk shell
-    // instead of the domes. The walls are handled separately below.
-    visibleMeshesCollisionMask: ColliderLayer.CL_NONE,
-    invisibleMeshesCollisionMask: ColliderLayer.CL_PHYSICS
+  // platform is reported async shortly after scene start; the layout depends on it
+  let waited = 0
+  engine.addSystem(function bootWhenPlatformKnown(dt: number) {
+    waited += dt
+    if (getPlatform() === null && waited < 3) return
+    engine.removeSystem(bootWhenPlatformKnown)
+    MOBILE = FORCE_MOBILE_PREVIEW || isMobile()
+    uiState.mobile = MOBILE
+    if (MOBILE) console.log('[H1-02] mobile mode: fixed camera + UI, console hidden')
+    buildScene()
   })
+}
 
-  // ---------- the movable set pieces, split out of the environment GLB ----------
-  // Declared in main.composite so the Creator Hub can reposition them; looked up here by
-  // name. If one is missing from the composite (deleted in the editor, or the composite
-  // hasn't been regenerated yet) it is recreated in code at its original spot so the scene
-  // never loses a piece. Collider policy matches the environment: physics only, so pointer
-  // rays reach the invisible button volumes rather than the pieces' own collider shells.
-  // Entities that overlay a piece (click volumes, captions, texts, the translator) are
-  // parented to it, so moving a piece carries its overlays along.
+function buildScene() {
+  // ---------- the environment and movable set pieces ----------
+  // All declared in main.composite so the Creator Hub can reposition them; looked up here
+  // by name, recreated in code at the original spot if missing. Colliders stay on
+  // CL_PHYSICS alone deliberately (console colliders enclose the button volumes).
   function pieceEntity(name: string, src: string, position: Vector3): Entity {
     const fromComposite = engine.getEntityOrNullByName(name)
     if (fromComposite) return fromComposite
@@ -270,52 +318,45 @@ export function setupGame() {
     })
     return e
   }
+  pieceEntity('Environment', ENV_MODEL, Vector3.Zero())
   const consoleRoot = pieceEntity('Console', CONSOLE_MODEL, CONSOLE_POS)
   const boothRoot = pieceEntity('Translator Booth', TRANSLATOR_BOOTH_MODEL, TRANSLATOR_BOOTH_POS)
   pieceEntity('Spawn Pad', SPAWN_PAD_MODEL, SPAWN_PAD_POS)
   const glyphPanelRoot = pieceEntity('Glyph Panel', GLYPH_PANEL_MODEL, GLYPH_PANEL_POS)
 
+  if (MOBILE) {
+    // console + glyph panel replaced by screen-space UI: sink both (model AND colliders)
+    for (const piece of [consoleRoot, glyphPanelRoot]) {
+      const t = Transform.getMutable(piece)
+      t.position = Vector3.create(t.position.x, t.position.y - 60, t.position.z)
+    }
+    setupMobileCamera()
+  }
+
   setupWalls()
   setupLighting()
 
-  // The alien half of the exchange lives on the canted panel, whose glass is a dark surface
-  // in the model so light text actually reads against it. Heights are chosen by viewing
-  // angle from the console (eye 1.78 at z 8.2), because DCL's ~60 deg vertical FOV puts
-  // anything past ~30 deg off screen when the player is looking level:
-  //   The panel tilts BACK, so a line lower on it needs a LOWER z to stay in front of the
-//   glass: the implementation line at z 14.6 sat 0.135 m behind the panel face and was
-//   invisible. Each line now clears its own local face depth by ~0.27 m.
-//   3rd person: glyph 14.0 deg — and the panel's lower edge sits at 6.1 deg, clear of
-//   the caged human's head at 2.8 deg, which it used to cover.
-  // The day counter moved off the panel entirely and onto the player's own console at
-  // 13.4 deg, which is where a score readout belongs anyway.
-  // There is deliberately no text on the back wall screen: from the console the glass globe
-  // covers its centre, and no height on that wall clears the bowl's silhouette.
-  dayText = makeText(
-    Vector3.subtract(Vector3.create(16, 2.35, 10.6), CONSOLE_POS),
-    0.9, Color4.create(1, 0.85, 0.4, 1), '', false, FACE_PLAYER, consoleRoot
-  )
-  // The panel model was re-exported at 70% size (it had far more area than the text used):
-  // it now spans y 4.31..5.83, z 14.41..15.29 at the original anchor. Both lines sit
-  // ~0.45 m in front of the canted face at their heights.
-  glyphText = makeText(
-    Vector3.subtract(Vector3.create(16, 5.35, 14.6), GLYPH_PANEL_POS),
-    1.9, Color4.create(0.85, 0.75, 1, 1), '', false, FACE_PLAYER, glyphPanelRoot
-  )
+  if (!MOBILE) {
+    // on mobile the day counter lives in the UI (uiState.day) — its console mount is gone
+    dayText = makeText(
+      Vector3.subtract(Vector3.create(16, 2.35, 10.6), CONSOLE_POS),
+      0.9, Color4.create(1, 0.85, 0.4, 1), '', false, FACE_PLAYER, consoleRoot
+    )
+  }
+  // The alien question line is symbol quads over the glyph atlas — see src/glyphs.ts.
+  glyphRow = createGlyphRow({
+    parent: glyphPanelRoot,
+    position: Vector3.subtract(Vector3.create(16, 5.35, 14.6), GLYPH_PANEL_POS),
+    size: 0.52,
+    maxGlyphs: 12,
+    color: Color3.create(0.85, 0.75, 1)
+  })
   implementationText = makeText(
     Vector3.subtract(Vector3.create(16, 4.65, 14.2), GLYPH_PANEL_POS),
     1.45, Color4.create(0.7, 1, 0.78, 1), '', false, FACE_PLAYER, glyphPanelRoot
   )
 
-  // ---------- the translator's speech bubble ----------
-  // Her reading is the human half of the exchange, so it comes out of her rather than off a
-  // screen. Billboarded: it floats in open air with nothing to clip into. Her podium sits at
-  // (20.8, 12.8) — between console and bowl, off to the right — which is the one spot that
-  // is both 46 deg off the player's forward view (so it reads without turning away from the
-  // tank) and clear of the right console pylon, which cut straight through earlier placements.
-  // The panel is deliberately SMALLER than the original 6.2 x 3.2 m — that one had several
-  // times more area than the text ever used. Root height keeps the panel's bottom edge at
-  // ~2.6 m, which is what clears the right console pylon's cap.
+  // ---------- the translator's speech bubble (desktop only — mobile uses UI) ----------
   bubbleRoot = engine.addEntity()
   Transform.create(bubbleRoot, {
     parent: boothRoot,
@@ -342,7 +383,6 @@ export function setupGame() {
     emissiveColor: Color3.create(0.25, 0.75, 0.9),
     emissiveIntensity: 1.4
   })
-  // tail: a cone tapering down toward her head
   const bubbleTail = engine.addEntity()
   Transform.create(bubbleTail, { parent: bubbleRoot, position: Vector3.create(0, -1.55, 0.07), scale: Vector3.create(0.85, 1.0, 0.25) })
   MeshRenderer.setCylinder(bubbleTail, 0.4, 0.0)
@@ -356,9 +396,6 @@ export function setupGame() {
   Transform.create(translatorText, { parent: bubbleRoot, position: Vector3.Zero() })
   TextShape.create(translatorText, {
     text: '',
-    // 1.4, not 1.5: at TEXT_SCALE 2.0 the 32-char lines spilled past the panel edge by a
-    // couple of characters. Shrinking the font ~7% instead of narrowing the wrap keeps the
-    // line count (and so the text block height) unchanged.
     fontSize: 1.4 * TEXT_SCALE,
     textColor: Color4.White(),
     outlineColor: Color3.Black(),
@@ -367,13 +404,11 @@ export function setupGame() {
   })
 
   // ---------- meter readouts, one per physical panel on the flanking posts ----------
-  // billboarded: the posts are canted 32 deg toward the console, and the player circles the
-  // bowl, so letting these turn is more legible than pinning them flat to the panel.
   for (const panel of METER_PANELS) {
     meterTexts.set(panel.key, makeText(panel.pos, 1.25, Color4.White(), '', true))
   }
 
-  // the human — a naked base avatar on the platform inside the fishbowl, facing the console
+  // the human — a naked base avatar on the platform inside the fishbowl
   humanAvatar = engine.addEntity()
   Transform.create(humanAvatar, {
     position: Vector3.create(16.2, PLATFORM_Y, 19.2),
@@ -383,7 +418,6 @@ export function setupGame() {
     id: 'human-c4e1',
     name: '',
     bodyShape: 'urn:decentraland:off-chain:base-avatars:BaseMale',
-    // face features only — no clothing wearables: the specimen arrived as-is
     wearables: [
       'urn:decentraland:off-chain:base-avatars:eyebrows_00',
       'urn:decentraland:off-chain:base-avatars:mouth_00',
@@ -395,13 +429,8 @@ export function setupGame() {
     emotes: []
   })
 
-  // The human's line floats just outside the front of the glass. Deliberately not
-  // billboarded — a wide billboard this close to the globe swings into it when the player
-  // steps sideways, and the line is meant to be read from the console anyway. It gets its
-  // own dark backing slab, because otherwise it sits against lit glass and disappears.
+  // The human's line floats just outside the front of the glass, with a dark backing slab.
   speechBacking = engine.addEntity()
-  // scaled with TEXT_SCALE; at 2.1 tall its top edge (4.1) still clears the glyph panel's
-  // lower edge (y 4.31 on the exported model)
   Transform.create(speechBacking, { position: Vector3.create(16, 3.05, 15.12), scale: Vector3.create(9.3, 2.1, 0.06) })
   MeshRenderer.setBox(speechBacking)
   Material.setPbrMaterial(speechBacking, {
@@ -409,15 +438,10 @@ export function setupGame() {
     transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND,
     roughness: 0.9
   })
-  // hidden whenever he has nothing to say, so an empty slab never sits in front of the cage
   VisibilityComponent.create(speechBacking, { visible: false })
-  // Sits BELOW the glyph panel, not beside it: at y 4.5 this line was inside the raised
-  // panel's volume (y 3.9..6.0, z 14.4..15.3) and completely buried. At y 3.05 it reads at
-  // 10.6 deg first-person / 2.3 deg third-person, clear of the panel's 18.8 / 6.8 deg lower
-  // edge and level with the caged human's head, so it still reads as his line.
   speechText = makeText(Vector3.create(16, 3.05, 15.0), 1.7, Color4.create(1, 1, 0.8, 1), '', false)
 
-  // the translator — on her podium beside the console, turned toward the player
+  // the translator — on her podium beside the console
   translatorAvatar = engine.addEntity()
   Transform.create(translatorAvatar, {
     parent: boothRoot,
@@ -442,32 +466,41 @@ export function setupGame() {
     emotes: []
   })
 
-  // ---------- the three buttons ----------
-  // The domes, bezels and halos are modelled in the GLB. These entities are invisible
-  // pointer volumes sitting exactly on top of them, so the click target matches the art.
-  for (let i = 0; i < 3; i++) {
-    const b = engine.addEntity()
-    // parented to the console model so the click volumes track the art if the console moves
-    Transform.create(b, {
-      parent: consoleRoot,
-      position: Vector3.subtract(BUTTON_POS[i], CONSOLE_POS),
-      scale: Vector3.create(0.92, 0.55, 0.92)
-    })
-    MeshCollider.setBox(b, ColliderLayer.CL_POINTER) // no MeshRenderer -> invisible but clickable
-    const idx = i
-    // registered exactly once — never re-register from inside a callback
-    pointerEventsSystem.onPointerDown(
-      { entity: b, opts: { button: InputAction.IA_POINTER, hoverText: 'press', maxDistance: 14 } },
-      () => onButtonPressed(idx)
-    )
-    buttons.push(b)
-    // caption sits on the modelled plate behind each dome
-    buttonCaptions.push(
-      makeText(
-        Vector3.subtract(CAPTION_POS[i], CONSOLE_POS),
-        0.9, Color4.White(), '', false, Quaternion.fromEulerDegrees(0, CAPTION_YAW[i], 0), consoleRoot
+  // ---------- the three buttons (desktop only — mobile renders them in UI) ----------
+  // Invisible pointer volumes sitting exactly on the modelled domes.
+  if (!MOBILE) {
+    for (let i = 0; i < 3; i++) {
+      const b = engine.addEntity()
+      Transform.create(b, {
+        parent: consoleRoot,
+        position: Vector3.subtract(BUTTON_POS[i], CONSOLE_POS),
+        scale: Vector3.create(0.92, 0.55, 0.92)
+      })
+      MeshCollider.setBox(b, ColliderLayer.CL_POINTER)
+      const idx = i
+      // registered exactly once — never re-register from inside a callback
+      pointerEventsSystem.onPointerDown(
+        { entity: b, opts: { button: InputAction.IA_POINTER, hoverText: 'press', maxDistance: 14 } },
+        () => onButtonPressed(idx)
       )
-    )
+      buttons.push(b)
+      buttonCaptions.push(
+        makeText(
+          Vector3.subtract(CAPTION_POS[i], CONSOLE_POS),
+          0.9, Color4.White(), '', false, Quaternion.fromEulerDegrees(0, CAPTION_YAW[i], 0), consoleRoot
+        )
+      )
+      buttonGlyphRows.push(
+        createGlyphRow({
+          parent: consoleRoot,
+          position: Vector3.subtract(Vector3.add(CAPTION_POS[i], Vector3.create(0, 0.52, 0)), CONSOLE_POS),
+          rotation: Quaternion.fromEulerDegrees(0, CAPTION_YAW[i], 0),
+          size: 0.3,
+          maxGlyphs: 6,
+          color: Color3.create(0.6, 0.95, 1)
+        })
+      )
+    }
   }
 
   // end-of-run plaque (hidden until death); clicking it restarts
@@ -491,7 +524,6 @@ export function setupGame() {
   )
 
   // ---------- staged consequences (pre-built, hidden), all inside the glass ----------
-  // hot vapor: translucent volume filling the globe
   vaporRoot = engine.addEntity()
   Transform.create(vaporRoot, {
     position: Vector3.create(16, 3.6, 19),
@@ -505,8 +537,6 @@ export function setupGame() {
   })
   VisibilityComponent.create(vaporRoot, { visible: false })
 
-  // Turbine: two crossed blades, spun by a system. Hangs at head height rather than up in
-  // the dome — at y 5.8 it sat directly behind the lowered glyph panel and was invisible.
   turbineRoot = engine.addEntity()
   Transform.create(turbineRoot, { position: Vector3.create(16, 3.9, 19) })
   VisibilityComponent.create(turbineRoot, { visible: false, propagateToChildren: true })
@@ -524,7 +554,6 @@ export function setupGame() {
     t.rotation = Quaternion.multiply(t.rotation, Quaternion.fromEulerDegrees(0, dt * 720, 0))
   })
 
-  // snow: scattered ice cubes on the specimen platform
   snowRoot = engine.addEntity()
   Transform.create(snowRoot, { position: Vector3.create(16, PLATFORM_Y, 19) })
   VisibilityComponent.create(snowRoot, { visible: false, propagateToChildren: true })
@@ -539,7 +568,6 @@ export function setupGame() {
     Material.setPbrMaterial(cube, { albedoColor: Color4.create(0.85, 0.95, 1, 0.9), transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND, roughness: 0.1, metallic: 0.1 })
   }
 
-  // predator: a large glossy red box that appears next to the human
   predatorRoot = engine.addEntity()
   Transform.create(predatorRoot, {
     position: Vector3.create(14.5, PLATFORM_Y + 0.7, 19.4),
@@ -560,11 +588,6 @@ export function setupGame() {
 }
 
 // ---------- walls ----------
-// The third-person camera only treats geometry as solid when its collider carries BOTH
-// CL_PHYSICS and CL_POINTER; with CL_PHYSICS alone the camera slides straight through, which
-// is what let it end up outside the room. These four invisible slabs replace the wall
-// colliders that used to live in the GLB, so the walls can carry both layers without
-// dragging the console's colliders (which enclose the clickable domes) along with them.
 const WALLS: { pos: Vector3; scale: Vector3 }[] = [
   { pos: Vector3.create(0.55, 4, 16), scale: Vector3.create(1.1, 8, 32) }, // west
   { pos: Vector3.create(31.45, 4, 16), scale: Vector3.create(1.1, 8, 32) }, // east
@@ -582,10 +605,6 @@ function setupWalls() {
 }
 
 // ---------- lighting ----------
-// The GLB carries no lights — glTF punctual lights are not imported by Decentraland, so the
-// Blender rig stays in the .blend for previews only and the room is lit by LightSource
-// entities here. They are deliberately spread out: the renderer only draws the handful
-// closest to the player (roughly 4–10 depending on quality settings).
 interface Lamp {
   name: string
   pos: Vector3
@@ -595,18 +614,13 @@ interface Lamp {
 }
 
 const LAMPS: Lamp[] = [
-  // the fishbowl is the only bright object in the room — two lights carry it
   { name: 'bowl-uplight', pos: Vector3.create(16, 2.2, 19), color: Color3.create(0.35, 0.92, 1.0), intensity: 13000, range: 13 },
   { name: 'bowl-key', pos: Vector3.create(16, 7.8, 19), color: Color3.create(0.72, 0.9, 1.0), intensity: 10000, range: 15 },
-  // warm pool over the console so the three buttons read from the spawn point
   { name: 'console', pos: Vector3.create(16, 2.8, 9.4), color: Color3.create(1.0, 0.78, 0.45), intensity: 7000, range: 11 },
-  // screen spill
   { name: 'display', pos: Vector3.create(16, 6.6, 16.6), color: Color3.create(0.62, 0.42, 1.0), intensity: 6000, range: 12 },
   { name: 'backwall', pos: Vector3.create(16, 7.2, 29.0), color: Color3.create(0.55, 0.38, 1.0), intensity: 15000, range: 20 },
-  // Giger rim light on the ribs, cool one side and hot the other
   { name: 'rim-west', pos: Vector3.create(3.8, 4.2, 16.0), color: Color3.create(0.85, 0.25, 0.8), intensity: 8000, range: 16 },
   { name: 'rim-east', pos: Vector3.create(28.2, 4.2, 16.0), color: Color3.create(0.3, 0.55, 1.0), intensity: 8000, range: 16 },
-  // arrival and the translator's podium
   { name: 'spawn', pos: Vector3.create(16, 3.0, 4.2), color: Color3.create(0.3, 0.7, 0.85), intensity: 5000, range: 12 },
   { name: 'podium', pos: Vector3.create(20.8, 2.4, 12.8), color: Color3.create(0.9, 0.35, 0.8), intensity: 3200, range: 7 }
 ]
@@ -629,9 +643,6 @@ function currentCard() {
   return DECK[order[(round - 1) % DECK_SIZE]]
 }
 
-// The human's line and its backing slab are one unit — the slab is only there to make the
-// text legible against lit glass, so it must never outlive the text and hang in front of
-// the cage on its own.
 function setSpeech(text: string) {
   TextShape.getMutable(speechText).text = text
   setVisible(speechBacking, text.length > 0)
@@ -676,17 +687,32 @@ function updateMetersDisplay(blank = false) {
 function render() {
   const card = currentCard()
   const r = ((round - 1) % ROUNDS_PER_DAY) + 1
-  TextShape.getMutable(dayText).text = `DAY ${dayOf(round)}  ·  ${r}/${ROUNDS_PER_DAY}`
-  TextShape.getMutable(glyphText).text = card.glyphs
-  TextShape.getMutable(translatorText).text = wrap(card.translation, 32)
-  setVisible(bubbleRoot, true)
+  const dayLine = `DAY ${dayOf(round)}  ·  ${r}/${ROUNDS_PER_DAY}`
+  // on mobile the question glyphs live in the UI instead (the 3D quads don't render
+  // there anyway — see uiState.glyphs)
+  if (!MOBILE) setGlyphRowText(glyphRow, card.glyphs)
   TextShape.getMutable(implementationText).text = ''
   setSpeech('')
   updateMetersDisplay()
-  for (let i = 0; i < 3; i++) {
-    const opt = card.options[i]
-    TextShape.getMutable(buttonCaptions[i]).text = wrap(`${opt.glyph}\n${opt.caption}`, 12)
-    setHoverText(buttons[i], opt.caption)
+  if (MOBILE) {
+    // console and glyph panel are gone — question glyphs, translator reading, day
+    // counter and option buttons all render in src/ui.tsx
+    uiState.day = dayLine
+    uiState.glyphs = card.glyphs
+    uiState.translation = wrap(card.translation, 44)
+    uiState.implementation = ''
+    for (let i = 0; i < 3; i++) uiState.captions[i] = card.options[i].caption
+    uiState.showButtons = true
+  } else {
+    TextShape.getMutable(dayText).text = dayLine
+    TextShape.getMutable(translatorText).text = wrap(card.translation, 32)
+    setVisible(bubbleRoot, true)
+    for (let i = 0; i < 3; i++) {
+      const opt = card.options[i]
+      TextShape.getMutable(buttonCaptions[i]).text = wrap(opt.caption, 12)
+      setGlyphRowText(buttonGlyphRows[i], opt.glyph)
+      setHoverText(buttons[i], opt.caption)
+    }
   }
   // the translator relays each new question with her trademark confidence
   playEmote(translatorAvatar, 'shrug')
@@ -699,11 +725,20 @@ function onButtonPressed(i: number) {
   const opt = card.options[i]
   state = 'resolving'
 
-  for (let k = 0; k < 3; k++) TextShape.getMutable(buttonCaptions[k]).text = ''
-  TextShape.getMutable(translatorText).text = ''
-  setVisible(bubbleRoot, false)
-  // wrapped narrower than the old 44: at TEXT_SCALE a 44-char line overhangs the panel
-  TextShape.getMutable(implementationText).text = wrap(`THE ALIENS ${opt.implementation}`, 34)
+  if (MOBILE) {
+    uiState.showButtons = false
+    uiState.translation = ''
+    uiState.implementation = wrap(`THE ALIENS ${opt.implementation}`, 40)
+  } else {
+    for (let k = 0; k < 3; k++) {
+      TextShape.getMutable(buttonCaptions[k]).text = ''
+      setGlyphRowText(buttonGlyphRows[k], '')
+    }
+    TextShape.getMutable(translatorText).text = ''
+    setVisible(bubbleRoot, false)
+    // wrapped narrower than the old 44: at TEXT_SCALE a 44-char line overhangs the panel
+    TextShape.getMutable(implementationText).text = wrap(`THE ALIENS ${opt.implementation}`, 34)
+  }
   showStaged(opt.staged)
 
   delay(REACTION_BEAT, () => {
@@ -752,6 +787,13 @@ function gameOver(line: string, instant: boolean) {
   MeshCollider.setBox(plaqueBox)
   setVisible(plaqueBox, true)
   setVisible(plaqueText, true)
+  if (MOBILE) {
+    uiState.showButtons = false
+    uiState.glyphs = '' // the run is over — clear every question element off the screen
+    uiState.translation = ''
+    uiState.implementation = ''
+    uiState.showRestart = true // the plaque is tappable too, but a big UI button is surer
+  }
   console.log(`[H1-02] GAME OVER day=${dayOf(round)} round=${round} — ${line}`)
 }
 
@@ -764,6 +806,7 @@ function restart() {
   MeshCollider.deleteFrom(plaqueBox)
   setVisible(plaqueBox, false)
   setVisible(plaqueText, false)
+  uiState.showRestart = false
   state = 'question'
   render()
   console.log('[H1-02] RESTART')

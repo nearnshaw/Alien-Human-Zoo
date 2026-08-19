@@ -6,6 +6,7 @@
  */
 export enum EntityNames {
   Console = "Console",
+  Environment = "Environment",
   Glyph_Panel = "Glyph Panel",
   Spawn_Pad = "Spawn Pad",
   Translator_Booth = "Translator Booth",
